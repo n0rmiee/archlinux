@@ -16,49 +16,44 @@ echo "System clock synchronized."
 echo "Available disks:"
 lsblk -d -n -o NAME,SIZE,TYPE | grep "disk"
 
-# Ask for the disk to check for unallocated space
-echo "Enter the disk to check for unallocated space (e.g., /dev/sda):"
+# Ask for the disk to install Arch Linux
+echo "Enter the disk to install Arch Linux on (e.g., /dev/sda):"
 read DISK
 
-# Check for unallocated space
-echo "Checking for unallocated space on $DISK..."
-UNALLOCATED=$(parted -m "$DISK" print free | grep 'Free Space')
+# List partitions on the selected disk
+echo "Partitions on $DISK:"
+lsblk "$DISK" -o NAME,SIZE,TYPE,MOUNTPOINT
 
-if [ -n "$UNALLOCATED" ]; then
-  # Extract and display the unallocated space
-  TOTAL_FREE=$(echo "$UNALLOCATED" | awk -F: '{print $2}' | awk '{print $1}')
-  echo "Unallocated space found: $TOTAL_FREE"
-  
-  # Ask user if they want to proceed with creating a new partition in the unallocated space
-  echo "Do you want to create a new partition in the unallocated space of $TOTAL_FREE? (yes/no)"
-  read CREATE_PARTITION
+# Ask user to select a partition to install Arch Linux
+echo "Enter the partition on which to install Arch Linux (e.g., /dev/sda1):"
+read PARTITION
 
-  if [ "$CREATE_PARTITION" == "yes" ]; then
-    # Extract the start and end points for the unallocated space
-    START=$(echo "$UNALLOCATED" | awk -F: '{print $2}' | awk '{print $2}')
-    END=$(echo "$UNALLOCATED" | awk -F: '{print $3}')
+# First confirmation before formatting
+echo "You have selected $PARTITION. Are you sure you want to format this partition? This action will erase all data on the partition. (yes/no)"
+read CONFIRMATION_1
 
-    # Create a new partition in the unallocated space
-    echo "Creating a new partition in the unallocated space from $START to $END..."
-    parted -s "$DISK" mkpart primary ext4 "$START" "$END"
-    NEW_PARTITION="${DISK}$(lsblk -l | grep "$DISK" | tail -n 1 | awk '{print $1}' | grep -o '[0-9]*')"
-  else
-    echo "No partition created. Please partition the disk manually."
-    exit
-  fi
-else
-  echo "No unallocated space found on $DISK."
+if [ "$CONFIRMATION_1" != "yes" ]; then
+  echo "Operation cancelled. Exiting."
   exit
 fi
 
-# Format the new partition
-echo "Formatting the new partition as ext4..."
-mkfs.ext4 "$NEW_PARTITION"
-echo "Partition $NEW_PARTITION formatted as ext4."
+# Second confirmation before formatting
+echo "Are you absolutely sure you want to format $PARTITION? (yes/no)"
+read CONFIRMATION_2
 
-# Mount the new partition
-mount "$NEW_PARTITION" /mnt
-echo "Partition mounted to /mnt."
+if [ "$CONFIRMATION_2" != "yes" ]; then
+  echo "Operation cancelled. Exiting."
+  exit
+fi
+
+# Proceed with formatting and installation
+echo "Formatting $PARTITION as ext4..."
+mkfs.ext4 "$PARTITION"
+echo "Partition $PARTITION formatted as ext4."
+
+# Mount the selected partition
+mount "$PARTITION" /mnt
+echo "Partition $PARTITION mounted to /mnt."
 
 # Optional swap partition
 echo "Do you want to create a swap file? (yes/no)"
