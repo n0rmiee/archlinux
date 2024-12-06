@@ -16,29 +16,43 @@ echo "System clock synchronized."
 echo "Available disks:"
 lsblk -d -n -o NAME,SIZE,TYPE | grep "disk"
 
-# Ask for the disk to install on
+# Ask for the disk to check for unallocated space
 echo "Enter the disk to check for unallocated space (e.g., /dev/sda):"
 read DISK
 
 # Check for unallocated space
 echo "Checking for unallocated space on $DISK..."
-UNALLOCATED=$(parted -m "$DISK" print free | grep 'Free Space' | tail -n 1)
+UNALLOCATED=$(parted -m "$DISK" print free | grep 'Free Space')
 
 if [ -n "$UNALLOCATED" ]; then
-  START=$(echo "$UNALLOCATED" | awk -F: '{print $2}')
-  END=$(echo "$UNALLOCATED" | awk -F: '{print $3}')
-  echo "Unallocated space found from $START to $END."
+  # Extract and display the unallocated space
+  TOTAL_FREE=$(echo "$UNALLOCATED" | awk -F: '{print $2}' | awk '{print $1}')
+  echo "Unallocated space found: $TOTAL_FREE"
   
-  # Create a new partition in the unallocated space
-  echo "Creating a new partition in the unallocated space..."
-  parted -s "$DISK" mkpart primary ext4 "${START}" "${END}"
-  NEW_PARTITION="${DISK}$(lsblk -l | grep "$DISK" | tail -n 1 | awk '{print $1}' | grep -o '[0-9]*')"
+  # Ask user if they want to proceed with creating a new partition in the unallocated space
+  echo "Do you want to create a new partition in the unallocated space of $TOTAL_FREE? (yes/no)"
+  read CREATE_PARTITION
+
+  if [ "$CREATE_PARTITION" == "yes" ]; then
+    # Extract the start and end points for the unallocated space
+    START=$(echo "$UNALLOCATED" | awk -F: '{print $2}' | awk '{print $2}')
+    END=$(echo "$UNALLOCATED" | awk -F: '{print $3}')
+
+    # Create a new partition in the unallocated space
+    echo "Creating a new partition in the unallocated space from $START to $END..."
+    parted -s "$DISK" mkpart primary ext4 "$START" "$END"
+    NEW_PARTITION="${DISK}$(lsblk -l | grep "$DISK" | tail -n 1 | awk '{print $1}' | grep -o '[0-9]*')"
+  else
+    echo "No partition created. Please partition the disk manually."
+    exit
+  fi
 else
-  echo "No unallocated space found. Please partition the disk manually."
+  echo "No unallocated space found on $DISK."
   exit
 fi
 
 # Format the new partition
+echo "Formatting the new partition as ext4..."
 mkfs.ext4 "$NEW_PARTITION"
 echo "Partition $NEW_PARTITION formatted as ext4."
 
