@@ -8,10 +8,6 @@ fi
 
 echo "Welcome to the Complete Arch Linux Installation Script!"
 
-# Update the system clock
-timedatectl set-ntp true
-echo "System clock synchronized."
-
 # List available disks
 echo "Available disks:"
 lsblk -d -n -o NAME,SIZE,TYPE | grep "disk"
@@ -28,36 +24,43 @@ lsblk "$DISK" -o NAME,SIZE,TYPE,MOUNTPOINT
 echo "Enter the partition on which to install Arch Linux (e.g., /dev/sda1):"
 read PARTITION
 
-# First confirmation before formatting
-echo "You have selected $PARTITION. Are you sure you want to format this partition? This action will erase all data on the partition. (yes/no)"
-read CONFIRMATION_1
+# Ask if the user wants to create a swap file
+echo "Do you want to create a swap file? (yes/no)"
+read CREATE_SWAP
 
-if [ "$CONFIRMATION_1" != "yes" ]; then
+# Choose a desktop environment
+echo "Choose a desktop environment to install:"
+echo "1) GNOME"
+echo "2) KDE Plasma"
+echo "3) XFCE"
+echo "4) Skip (no desktop environment)"
+read DE_CHOICE
+
+# Confirmation before proceeding
+echo "You have selected the following options:"
+echo "Disk: $DISK"
+echo "Partition: $PARTITION"
+echo "Swap file: $CREATE_SWAP"
+echo "Desktop Environment: $DE_CHOICE"
+echo "Proceed with installation? (yes/no)"
+read PROCEED
+if [ "$PROCEED" != "yes" ]; then
   echo "Operation cancelled. Exiting."
   exit
 fi
 
-# Second confirmation before formatting
-echo "Are you absolutely sure you want to format $PARTITION? (yes/no)"
-read CONFIRMATION_2
+# Begin Installation
+echo "Formatting and setting up the disk..."
 
-if [ "$CONFIRMATION_2" != "yes" ]; then
-  echo "Operation cancelled. Exiting."
-  exit
-fi
-
-# Proceed with formatting and installation
+# Format the selected partition
 echo "Formatting $PARTITION as ext4..."
 mkfs.ext4 "$PARTITION"
-echo "Partition $PARTITION formatted as ext4."
 
 # Mount the selected partition
 mount "$PARTITION" /mnt
 echo "Partition $PARTITION mounted to /mnt."
 
-# Optional swap partition
-echo "Do you want to create a swap file? (yes/no)"
-read CREATE_SWAP
+# Create swap if selected
 if [ "$CREATE_SWAP" == "yes" ]; then
   echo "Creating a 2GB swap file..."
   fallocate -l 2G /mnt/swapfile
@@ -66,8 +69,6 @@ if [ "$CREATE_SWAP" == "yes" ]; then
   swapon /mnt/swapfile
   echo "/swapfile none swap sw 0 0" >> /mnt/etc/fstab
   echo "Swap file created and activated."
-else
-  echo "No swap file created."
 fi
 
 # Install essential packages
@@ -109,15 +110,8 @@ grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
 echo "Bootloader installed."
 
-# Choose desktop environment
-echo "Choose a desktop environment to install:"
-echo "1) GNOME"
-echo "2) KDE Plasma"
-echo "3) XFCE"
-echo "4) Skip (no desktop environment)"
-read DE_CHOICE
-
-case \$DE_CHOICE in
+# Install desktop environment based on user choice
+case $DE_CHOICE in
   1)
     echo "Installing GNOME and essentials..."
     pacman -S --noconfirm gnome gnome-extra gdm
