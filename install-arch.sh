@@ -1,160 +1,141 @@
 #!/bin/bash
 
-# Check for root permissions
-if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root"
-  exit
-fi
+set -e
 
-echo "Welcome to the Complete Arch Linux Installation Script!"
-
-# List available disks
+# List all available disks (excluding partitions)
+echo "Detecting available disks..."
+DISKS=$(lsblk -d -p -n -l | grep -E 'disk' | awk '{print $1}')
 echo "Available disks:"
-lsblk -d -n -o NAME,SIZE,TYPE | grep "disk"
+echo "$DISKS"
 
-# Ask for the disk to install Arch Linux
-echo "Enter the disk to install Arch Linux on (e.g., /dev/sda):"
-read DISK
+# Prompt user to select a disk
+read -p "Enter the disk you want to use (e.g., /dev/sda): " DISK
 
-# List partitions on the selected disk
-echo "Partitions on $DISK:"
-lsblk "$DISK" -o NAME,SIZE,TYPE,MOUNTPOINT
-
-# Ask user to select a partition to install Arch Linux
-echo "Enter the partition on which to install Arch Linux (e.g., /dev/sda1):"
-read PARTITION
-
-# Ask if the user wants to create a swap file
-echo "Do you want to create a swap file? (yes/no)"
-read CREATE_SWAP
-
-# Choose a desktop environment
-echo "Choose a desktop environment to install:"
-echo "1) GNOME"
-echo "2) KDE Plasma"
-echo "3) XFCE"
-echo "4) Skip (no desktop environment)"
-read DE_CHOICE
-
-# Confirmation before proceeding
-echo "You have selected the following options:"
-echo "Disk: $DISK"
-echo "Partition: $PARTITION"
-echo "Swap file: $CREATE_SWAP"
-echo "Desktop Environment: $DE_CHOICE"
-echo "Proceed with installation? (yes/no)"
-read PROCEED
-if [ "$PROCEED" != "yes" ]; then
-  echo "Operation cancelled. Exiting."
-  exit
+# Check if the disk exists
+if [ ! -b "$DISK" ]; then
+    echo "Error: Disk $DISK not found. Exiting."
+    exit 1
 fi
 
-# Begin Installation
-echo "Formatting and setting up the disk..."
+echo "Selected disk: $DISK"
 
-# Format the selected partition
-echo "Formatting $PARTITION as ext4..."
-mkfs.ext4 "$PARTITION"
+# Set variables
+HOSTNAME="archlinux"
+USERNAME="user"
+PASSWORD="password"
+DESKTOP_ENV="xfce"  # Change to your preferred desktop environment (gnome, kde, etc.)
 
-# Mount the selected partition
-mount "$PARTITION" /mnt
-echo "Partition $PARTITION mounted to /mnt."
+echo "Starting Arch Linux installation..."
 
-# Create swap if selected
-if [ "$CREATE_SWAP" == "yes" ]; then
-  echo "Creating a 2GB swap file..."
-  fallocate -l 2G /mnt/swapfile
-  chmod 600 /mnt/swapfile
-  mkswap /mnt/swapfile
-  swapon /mnt/swapfile
-  echo "/swapfile none swap sw 0 0" >> /mnt/etc/fstab
-  echo "Swap file created and activated."
+# Launch cfdisk for manual partitioning
+echo "Launching cfdisk for manual partitioning on $DISK..."
+cfdisk $DISK
+
+echo "Please ensure you've created the following partitions:"
+echo "1. EFI partition (type: EFI System, size: 512 MiB)"
+echo "2. Root partition (type: Linux filesystem, remaining space)"
+read -p "Press Enter to continue after partitioning..."
+
+# Verify partitions
+lsblk $DISK
+read -p "Are the partitions correct? (yes/no): " CONFIRM
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Exiting. Please re-run the script after correcting the partitions."
+    exit 1
 fi
 
-# Install essential packages
-pacstrap /mnt base linux linux-firmware vim
-echo "Base system installed."
+# Get partition names (automatically detects partitions)
+EFI_PART="${DISK}1"
+ROOT_PART="${DISK}2"
+
+# Check if partitions exist
+if [ ! -b "$EFI_PART" ] || [ ! -b "$ROOT_PART" ]; then
+    echo "Error: One or both partitions do not exist. Please check your partitioning."
+    exit 1
+fi
+
+# Format partitions
+echo "Formatting partitions..."
+mkfs.fat -F32 "$EFI_PART"
+mkfs.ext4 "$ROOT_PART"
+
+# Mount partitions
+echo "Mounting partitions..."
+mount "$ROOT_PART" /mnt
+mkdir -p /mnt/boot
+mount "$EFI_PART" /mnt/boot
+
+# Install base system and essential packages
+echo "Installing base system and necessary packages..."
+pacstrap /mnt base linux linux-firmware vim grub efibootmgr networkmanager \
+         sudo git wget curl base-devel zsh htop neofetch ntp man-db \
+         bash-completion iproute2 linux-headers netctl pciutils \
+         xorg-server xorg-apps xfce4 xfce4-goodies lightdm lightdm-gtk-greeter \
+         pulseaudio pulseaudio-alsa pavucontrol networkmanager-dmenu \
+         firefox xf86-video-intel mesa intel-ucode \
+         intel-media-driver libva-intel-driver
+
+# Check if pacstrap was successful
+if [ $? -ne 0 ]; then
+    echo "Error: pacstrap failed. Please check the installation log."
+    exit 1
+fi
 
 # Generate fstab
+echo "Generating fstab..."
 genfstab -U /mnt >> /mnt/etc/fstab
-echo "fstab file generated."
 
-# Chroot into the new system
-echo "Entering the chroot environment..."
-arch-chroot /mnt <<EOF
+# Check if fstab was generated successfully
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to generate fstab. Please check the system log."
+    exit 1
+fi
 
-# Set timezone to Bangladesh/Dhaka
-ln -sf /usr/share/zoneinfo/Asia/Dhaka /etc/localtime
-hwclock --systohc
+# Configure the system
+echo "Configuring the system..."
+arch-chroot /mnt bash -c "
+    # Set timezone
+    ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+    hwclock --systohc
 
-# Localization
-echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-locale-gen
-echo "LANG=en_US.UTF-8" > /etc/locale.conf
+    # Set localization
+    echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen
+    locale-gen
+    echo 'LANG=en_US.UTF-8' > /etc/locale.conf
 
-# Set hostname
-echo "Enter a hostname for your system:"
-read HOSTNAME
-echo "$HOSTNAME" > /etc/hostname
-echo "127.0.0.1 localhost" >> /etc/hosts
-echo "::1       localhost" >> /etc/hosts
-echo "127.0.1.1 $HOSTNAME.localdomain $HOSTNAME" >> /etc/hosts
+    # Set hostname
+    echo '$HOSTNAME' > /etc/hostname
+    echo '127.0.0.1   localhost' >> /etc/hosts
+    echo '::1         localhost' >> /etc/hosts
+    echo '127.0.1.1   $HOSTNAME.localdomain $HOSTNAME' >> /etc/hosts
 
-# Set root password
-echo "Set the root password:"
-passwd
+    # Set root password
+    echo 'root:$PASSWORD' | chpasswd
 
-# Install bootloader
-pacman -S grub efibootmgr --noconfirm
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
-grub-mkconfig -o /boot/grub/grub.cfg
-echo "Bootloader installed."
+    # Add user
+    useradd -m -G wheel $USERNAME
+    echo '$USERNAME:$PASSWORD' | chpasswd
+    echo '%wheel ALL=(ALL) ALL' > /etc/sudoers.d/wheel
 
-# Install desktop environment based on user choice
-case $DE_CHOICE in
-  1)
-    echo "Installing GNOME and essentials..."
-    pacman -S --noconfirm gnome gnome-extra gdm
-    systemctl enable gdm
-    ;;
-  2)
-    echo "Installing KDE Plasma and essentials..."
-    pacman -S --noconfirm plasma kde-applications sddm
-    systemctl enable sddm
-    ;;
-  3)
-    echo "Installing XFCE and essentials..."
-    pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
+    # Enable necessary services
+    systemctl enable NetworkManager
     systemctl enable lightdm
-    ;;
-  4)
-    echo "Skipping desktop environment installation."
-    ;;
-  *)
-    echo "Invalid choice. Skipping desktop environment installation."
-    ;;
-esac
 
-# Install additional essential software
-echo "Installing additional essential software..."
-pacman -S --noconfirm \
-  networkmanager network-manager-applet \
-  firefox vlc libreoffice-fresh \
-  git base-devel \
-  bluez bluez-utils \
-  cups hplip \
-  flatpak
-systemctl enable NetworkManager
-systemctl enable bluetooth
-systemctl enable cups
+    # Install bootloader (GRUB)
+    grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+    grub-mkconfig -o /boot/grub/grub.cfg
 
-# Enable Flatpak repository
-flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-echo "Flatpak configured."
+    # Enable display manager (LightDM)
+    systemctl enable lightdm
+"
 
-EOF
+# Check if GRUB was successfully installed
+if [ $? -ne 0 ]; then
+    echo "Error: GRUB installation failed. Please check the system log."
+    exit 1
+fi
 
-# Unmount partitions and reboot
+# Unmount and reboot
+echo "Installation complete! Unmounting and rebooting..."
 umount -R /mnt
-echo "Installation complete! Rebooting..."
 reboot
